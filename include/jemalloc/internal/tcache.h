@@ -1,3 +1,5 @@
+#include <pthread.h>
+
 /******************************************************************************/
 #ifdef JEMALLOC_H_TYPES
 
@@ -67,9 +69,12 @@ struct tcache_bin_info_s {
 
 struct tcache_bin_s {
 	tcache_bin_stats_t tstats;
-	int		low_water;	/* Min # cached since last GC. */
+  long lock;
+  pthread_cond_t c;
+  pthread_mutex_t cm;
+	long		low_water;	/* Min # cached since last GC. */
 	unsigned	lg_fill_div;	/* Fill (ncached_max >> lg_fill_div). */
-	unsigned	ncached;	/* # of cached objects. */
+  unsigned	long ncached;	/* # of cached objects. */
 	void		**avail;	/* Stack of available objects. */
 };
 
@@ -124,8 +129,8 @@ extern size_t	tcache_maxclass;
 extern tcaches_t	*tcaches;
 
 size_t	tcache_salloc(const void *ptr);
-void	tcache_event_hard(tsd_t *tsd, tcache_t *tcache);
-void	*tcache_alloc_small_hard(tsd_t *tsd, arena_t *arena, tcache_t *tcache,
+void	tcache_event_hard(int cpu, tsd_t *tsd, tcache_t *tcache);
+void	*tcache_alloc_small_hard(int cpu, tsd_t *tsd, arena_t *arena, tcache_t *tcache,
     tcache_bin_t *tbin, szind_t binind);
 void	tcache_bin_flush_small(tsd_t *tsd, tcache_t *tcache, tcache_bin_t *tbin,
     szind_t binind, unsigned rem);
@@ -150,12 +155,12 @@ bool	tcache_boot(void);
 #ifdef JEMALLOC_H_INLINES
 
 #ifndef JEMALLOC_ENABLE_INLINE
-void	tcache_event(tsd_t *tsd, tcache_t *tcache);
+void	tcache_event(int cpu, tsd_t *tsd, tcache_t *tcache);
 void	tcache_flush(void);
 bool	tcache_enabled_get(void);
 tcache_t *tcache_get(tsd_t *tsd, bool create);
 void	tcache_enabled_set(bool enabled);
-void	*tcache_alloc_easy(tcache_bin_t *tbin);
+void	*tcache_alloc_easy(int cpu, tcache_bin_t *tbin, tcache_t *tcache);
 void	*tcache_alloc_small(tsd_t *tsd, arena_t *arena, tcache_t *tcache,
     size_t size, bool zero);
 void	*tcache_alloc_large(tsd_t *tsd, arena_t *arena, tcache_t *tcache,
@@ -234,7 +239,7 @@ tcache_get(tsd_t *tsd, bool create)
 }
 
 JEMALLOC_ALWAYS_INLINE void
-tcache_event(tsd_t *tsd, tcache_t *tcache)
+tcache_event(int cpu, tsd_t *tsd, tcache_t *tcache)
 {
 
 	if (TCACHE_GC_INCR == 0)
@@ -242,45 +247,196 @@ tcache_event(tsd_t *tsd, tcache_t *tcache)
 
 	tcache->ev_cnt++;
 	assert(tcache->ev_cnt <= TCACHE_GC_INCR);
-	if (unlikely(tcache->ev_cnt == TCACHE_GC_INCR))
-		tcache_event_hard(tsd, tcache);
+	if (unlikely(tcache->ev_cnt >= TCACHE_GC_INCR))
+          tcache_event_hard(cpu, tsd, tcache);
+
+}
+
+JEMALLOC_ALWAYS_INLINE int rseq_percpu_cmpxchg(int cpu, intptr_t *p, intptr_t old, intptr_t newv) {
+  asm volatile goto (
+    "1:\n\t"
+    "cmpl %1, %0\n\t"
+    "jne %l[fail]\n\t"
+    "cmpq %2, %3\n\t"
+    "jne %l[fail]\n\t"
+    "movq %4, %3\n\t"
+    "2:\n\t"
+    ".pushsection __rseq_sections, \"a\"\n\t"
+    ".quad 1b, 2b,  %l[fail]\n\t"
+    ".popsection\n\t"
+    :
+    : "r" (cpu), "m" (__rseq_current_cpu),
+      "r" (old), "m" (*p), "r" (newv)
+    : "memory"
+    : fail);
+  return 0;
+  fail:
+  return -1;
+  }
+JEMALLOC_ALWAYS_INLINE int rseq_percpu_cmpxchgcheck(int cpu, intptr_t *p, intptr_t old, intptr_t newv,
+                                     intptr_t *check_ptr, intptr_t check_val) {
+  asm volatile goto (
+    "1:\n\t"
+    "cmpl %1, %0\n\t"
+    "jne %l[fail]\n\t"
+    "cmpq %2, %3\n\t"
+    "jne %l[fail]\n\t"
+    "cmpq %5, %6\n\t"
+    "jne %l[fail]\n\t"
+    "movq %4, %3\n\t"
+    "2:\n\t"
+    ".pushsection __rseq_sections, \"a\"\n\t"
+    ".quad 1b, 2b, %l[fail]\n\t"
+    ".popsection\n\t"
+    :
+    : "r" (cpu), "m" (__rseq_current_cpu),
+      "r" (old), "m" (*p), "r" (newv),
+      "r" (check_val), "m" (*check_ptr)
+    : "memory"
+    : fail);
+  return 0;
+  fail:
+  return -1;
+  }
+
+
+JEMALLOC_ALWAYS_INLINE int rseq_percpu_cmpxchgcheckcheck(int cpu, intptr_t *p, intptr_t old, intptr_t newv,
+                                                                            intptr_t *check_ptr, intptr_t check_val,
+                                                                            intptr_t *check_ptr2, intptr_t check_val2) {
+  asm volatile goto (
+    "1:\n\t"
+    "cmpl %1, %0\n\t"
+    "jne %l[fail]\n\t"
+    "cmpq %2, %3\n\t"
+    "jne %l[fail]\n\t"
+    "cmpq %5, %6\n\t"
+    "jne %l[fail]\n\t"
+    "cmpq %7, %8\n\t"
+    "jne %l[fail]\n\t"
+    "movq %4, %3\n\t"
+    "2:\n\t"
+    ".pushsection __rseq_sections, \"a\"\n\t"
+    ".quad 1b, 2b, %l[fail]\n\t"
+    ".popsection\n\t"
+    :
+    : "r" (cpu), "m" (__rseq_current_cpu),
+      "r" (old), "m" (*p), "r" (newv),
+      "r" (check_val), "m" (*check_ptr),
+      "r" (check_val2), "m" (*check_ptr2)
+    : "memory"
+    : fail);
+  return 0;
+  fail:
+  return -1;
+}
+
+JEMALLOC_ALWAYS_INLINE int rseq_percpu_cmpxchgcheckset(int cpu, intptr_t *p, intptr_t old, intptr_t newv,
+                                                                            intptr_t *set_ptr, intptr_t set_val,
+                                                                            intptr_t *check_ptr2, intptr_t check_val2) {
+  asm volatile goto (
+    "1:\n\t"
+    "cmpl %1, %0\n\t"
+    "jne %l[fail]\n\t"
+    "cmpq %2, %3\n\t"
+    "jne %l[fail]\n\t"
+    "cmpq %7, %8\n\t"
+    "jne %l[fail]\n\t"
+    "movq %5, %6\n\t"
+    "movq %4, %3\n\t"
+    "2:\n\t"
+    ".pushsection __rseq_sections, \"a\"\n\t"
+    ".quad 1b, 2b,  %l[fail]\n\t"
+    ".popsection\n\t"
+    :
+    : "r" (cpu), "m" (__rseq_current_cpu),
+      "r" (old), "m" (*p), "r" (newv),
+      "r" (set_val), "m" (*set_ptr),
+      "r" (check_val2), "m" (*check_ptr2)
+    : "memory"
+    : fail);
+  return 0;
+  fail:
+  return -1;
 }
 
 JEMALLOC_ALWAYS_INLINE void *
-tcache_alloc_easy(tcache_bin_t *tbin)
+tcache_alloc_easy(int cpu, tcache_bin_t *tbin, tcache_t *tcache)
 {
-	void *ret;
+  void *ret = NULL;
 
-	if (unlikely(tbin->ncached == 0)) {
-		tbin->low_water = -1;
-		return (NULL);
-	}
-	tbin->ncached--;
-	if (unlikely((int)tbin->ncached < tbin->low_water))
-		tbin->low_water = tbin->ncached;
-	ret = tbin->avail[tbin->ncached];
-	return (ret);
+  unsigned long old = tbin->ncached;
+
+  unsigned long new = old - 1;
+
+  if (unlikely(old == 0)) {
+    rseq_percpu_cmpxchg(cpu, (intptr_t*)&tbin->low_water,
+                        (intptr_t)tbin->low_water,
+                        (intptr_t)-1);
+    return (NULL);
+  }
+
+  if (unlikely((int)new < tbin->low_water)) {
+    if (0 != rseq_percpu_cmpxchg(cpu, (intptr_t*)&tbin->low_water,
+                                 (intptr_t)tbin->low_water,
+                                 (intptr_t)new)) {
+      return NULL;
+    }
+  }
+
+  ret = tbin->avail[new];
+
+  assert(ret != NULL);
+
+  if (0 == rseq_percpu_cmpxchgcheckcheck(
+        cpu,
+        (intptr_t*)&tbin->ncached, (intptr_t)old, (intptr_t)new,
+        (intptr_t *)&tbin->avail[new], (intptr_t)ret,
+        (intptr_t*)&tbin->lock, (intptr_t)0)) {
+
+    return ret;
+  }
+
+
+  return NULL;
+
 }
+
 
 JEMALLOC_ALWAYS_INLINE void *
 tcache_alloc_small(tsd_t *tsd, arena_t *arena, tcache_t *tcache, size_t size,
     bool zero)
 {
-	void *ret;
+  void *ret = NULL;
 	szind_t binind;
 	size_t usize;
 	tcache_bin_t *tbin;
+        int cpu;
 
-	binind = size2index(size);
-	assert(binind < NBINS);
-	tbin = &tcache->tbins[binind];
-	usize = index2size(binind);
-	ret = tcache_alloc_easy(tbin);
-	if (unlikely(ret == NULL)) {
-		ret = tcache_alloc_small_hard(tsd, arena, tcache, tbin, binind);
-		if (ret == NULL)
-			return (NULL);
-	}
+  retry:
+
+        cpu = rseq_current_cpu();
+        tcache = tcaches[cpu].tcache;
+
+        binind = size2index(size);
+        assert(binind < NBINS);
+        tbin = &tcache->tbins[binind];
+
+        usize = index2size(binind);
+
+
+        ret = tcache_alloc_easy(cpu, tbin, tcache);
+
+
+        if (unlikely(ret == NULL)) {
+          if (cpu != rseq_current_cpu())
+            goto retry;
+          ret = tcache_alloc_small_hard(cpu, tsd, arena, tcache, tbin, binind);
+          if (ret == NULL) {
+            goto retry;
+          }
+        }
+
+        assert(ret != NULL);
 	assert(tcache_salloc(ret) == usize);
 
 	if (likely(!zero)) {
@@ -303,7 +459,7 @@ tcache_alloc_small(tsd_t *tsd, arena_t *arena, tcache_t *tcache, size_t size,
 		tbin->tstats.nrequests++;
 	if (config_prof)
 		tcache->prof_accumbytes += usize;
-	tcache_event(tsd, tcache);
+	tcache_event(cpu, tsd, tcache);
 	return (ret);
 }
 
@@ -315,14 +471,22 @@ tcache_alloc_large(tsd_t *tsd, arena_t *arena, tcache_t *tcache, size_t size,
 	szind_t binind;
 	size_t usize;
 	tcache_bin_t *tbin;
+        int cpu;
+  retry:
+          cpu = rseq_current_cpu();
+          tcache = tcaches[cpu].tcache;
 
 	binind = size2index(size);
 	usize = index2size(binind);
 	assert(usize <= tcache_maxclass);
 	assert(binind < nhbins);
 	tbin = &tcache->tbins[binind];
-	ret = tcache_alloc_easy(tbin);
+	ret = tcache_alloc_easy(cpu, tbin, tcache);
 	if (unlikely(ret == NULL)) {
+
+          if (cpu != rseq_current_cpu())
+            goto retry;
+
 		/*
 		 * Only allocate one large object at a time, because it's quite
 		 * expensive to create one and not use it.
@@ -355,7 +519,7 @@ tcache_alloc_large(tsd_t *tsd, arena_t *arena, tcache_t *tcache, size_t size,
 			tcache->prof_accumbytes += usize;
 	}
 
-	tcache_event(tsd, tcache);
+	tcache_event(cpu, tsd, tcache);
 	return (ret);
 }
 
@@ -364,52 +528,130 @@ tcache_dalloc_small(tsd_t *tsd, tcache_t *tcache, void *ptr, szind_t binind)
 {
 	tcache_bin_t *tbin;
 	tcache_bin_info_t *tbin_info;
+        int cpu;
 
 	assert(tcache_salloc(ptr) <= SMALL_MAXCLASS);
 
-	if (config_fill && unlikely(opt_junk_free))
+	if (config_fill && unlikely(opt_junk_free)) {
+          printf("Fail\n");
 		arena_dalloc_junk_small(ptr, &arena_bin_info[binind]);
+        }
 
-	tbin = &tcache->tbins[binind];
-	tbin_info = &tcache_bin_info[binind];
-	if (unlikely(tbin->ncached == tbin_info->ncached_max)) {
-		tcache_bin_flush_small(tsd, tcache, tbin, binind,
-		    (tbin_info->ncached_max >> 1));
-	}
-	assert(tbin->ncached < tbin_info->ncached_max);
-	tbin->avail[tbin->ncached] = ptr;
-	tbin->ncached++;
+        do {
+          cpu = rseq_current_cpu();
+          tcache = tcaches[cpu].tcache;
 
-	tcache_event(tsd, tcache);
+          tbin = &tcache->tbins[binind];
+          tbin_info = &tcache_bin_info[binind];
+
+          unsigned long old = tbin->ncached;
+          unsigned long new = old + 1;
+
+          if (unlikely(old == tbin_info->ncached_max)) {
+
+            if (0 == rseq_percpu_cmpxchg(cpu, (intptr_t*)&tbin->lock, (intptr_t)0, (intptr_t)1)) {
+              if (tbin->ncached == tbin_info->ncached_max) {
+                tcache_bin_flush_small(tsd, tcache, tbin, binind,
+                (tbin_info->ncached_max >> 1));
+
+              }
+          pthread_mutex_lock(&tbin->cm);
+          tbin->lock = 0;
+          pthread_cond_broadcast(&tbin->c);
+          pthread_mutex_unlock(&tbin->cm);
+              continue;
+            } else {
+              pthread_mutex_lock(&tbin->cm);
+              while(tbin->lock != 0)
+                pthread_cond_wait(&tbin->c, &tbin->cm);
+              pthread_mutex_unlock(&tbin->cm);
+
+              continue;
+            }
+
+
+          }
+
+          assert(old < tbin_info->ncached_max);
+
+          if (0 == rseq_percpu_cmpxchgcheckset(
+                cpu,
+                (intptr_t*)&tbin->ncached, (intptr_t)old, (intptr_t)new,
+                (intptr_t *)&tbin->avail[old], (intptr_t)ptr,
+                (intptr_t*)&tbin->lock, (intptr_t)0)) {
+            break;
+          }
+
+
+        } while (true);
+
+	tcache_event(cpu, tsd, tcache);
 }
 
 JEMALLOC_ALWAYS_INLINE void
 tcache_dalloc_large(tsd_t *tsd, tcache_t *tcache, void *ptr, size_t size)
 {
-	szind_t binind;
-	tcache_bin_t *tbin;
-	tcache_bin_info_t *tbin_info;
+  szind_t binind;
+  tcache_bin_t *tbin;
+  tcache_bin_info_t *tbin_info;
+  int cpu;
 
-	assert((size & PAGE_MASK) == 0);
-	assert(tcache_salloc(ptr) > SMALL_MAXCLASS);
-	assert(tcache_salloc(ptr) <= tcache_maxclass);
+  assert((size & PAGE_MASK) == 0);
+  assert(tcache_salloc(ptr) > SMALL_MAXCLASS);
+  assert(tcache_salloc(ptr) <= tcache_maxclass);
 
-	binind = size2index(size);
+  binind = size2index(size);
 
-	if (config_fill && unlikely(opt_junk_free))
-		arena_dalloc_junk_large(ptr, size);
+  if (config_fill && unlikely(opt_junk_free))
+    arena_dalloc_junk_large(ptr, size);
 
-	tbin = &tcache->tbins[binind];
-	tbin_info = &tcache_bin_info[binind];
-	if (unlikely(tbin->ncached == tbin_info->ncached_max)) {
-		tcache_bin_flush_large(tsd, tbin, binind,
-		    (tbin_info->ncached_max >> 1), tcache);
-	}
-	assert(tbin->ncached < tbin_info->ncached_max);
-	tbin->avail[tbin->ncached] = ptr;
-	tbin->ncached++;
+  do {
+    cpu = rseq_current_cpu();
+    tcache = tcaches[cpu].tcache;
 
-	tcache_event(tsd, tcache);
+    tbin = &tcache->tbins[binind];
+    tbin_info = &tcache_bin_info[binind];
+
+    unsigned long old = tbin->ncached;
+    unsigned long new = old + 1;
+
+    if (unlikely(tbin->ncached == tbin_info->ncached_max)) {
+      if (0 == rseq_percpu_cmpxchg(cpu, (intptr_t*)&tbin->lock, (intptr_t)0, (intptr_t)1)) {
+        if (tbin->ncached == tbin_info->ncached_max) {
+
+          tcache_bin_flush_large(tsd, tbin, binind,
+                                 (tbin_info->ncached_max >> 1), tcache);
+        }
+        pthread_mutex_lock(&tbin->cm);
+        tbin->lock = 0;
+        pthread_cond_broadcast(&tbin->c);
+        pthread_mutex_unlock(&tbin->cm);
+        continue;
+      } else {
+        pthread_mutex_lock(&tbin->cm);
+        while(tbin->lock != 0)
+          pthread_cond_wait(&tbin->c, &tbin->cm);
+        pthread_mutex_unlock(&tbin->cm);
+
+        continue;
+      }
+
+
+    }
+    assert(tbin->ncached < tbin_info->ncached_max);
+
+    if (0 == rseq_percpu_cmpxchgcheckset(
+          cpu,
+          (intptr_t*)&tbin->ncached, (intptr_t)old, (intptr_t)new,
+          (intptr_t *)&tbin->avail[old], (intptr_t)ptr,
+          (intptr_t*)&tbin->lock, (intptr_t)0)) {
+      break;
+    }
+
+  } while (true);
+
+
+  tcache_event(cpu, tsd, tcache);
 }
 
 JEMALLOC_ALWAYS_INLINE tcache_t *

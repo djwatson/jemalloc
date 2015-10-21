@@ -1325,16 +1325,27 @@ malloc_init_hard(void)
 		malloc_mutex_unlock(&init_lock);
 		return (true);
 	}
+
+
 	if (malloc_tsd_boot0()) {
 		malloc_mutex_unlock(&init_lock);
 		return (true);
 	}
+
+        unsigned ind;
+        for (i = 0; i < 32; i++) {
+          tcaches_create(tsd_get(), &ind);
+        }
+
 	if (config_prof && prof_boot2()) {
 		malloc_mutex_unlock(&init_lock);
 		return (true);
 	}
 
 	malloc_init_hard_recursible();
+
+
+
 
 	if (malloc_init_hard_finish()) {
 		malloc_mutex_unlock(&init_lock);
