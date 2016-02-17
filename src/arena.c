@@ -108,63 +108,8 @@ run_quantize(size_t size)
 	 * during normal large allocation.  Add large_pad so that cache index
 	 * randomization can offset the allocation from the page boundary.
 	 */
-	qsize = index2size(size2index(size - large_pad + 1) - 1) + large_pad;
-	if (qsize <= SMALL_MAXCLASS + large_pad)
-		return (run_quantize(size - large_pad));
+	qsize = index2size(size2index(size + 1) - 1) ;
 	assert(qsize <= size);
-	return (qsize);
-}
-
-static size_t
-run_quantize_next(size_t size)
-{
-	size_t large_run_size_next;
-
-	assert(size != 0);
-	assert(size == PAGE_CEILING(size));
-
-	/*
-	 * Return the next quantized size greater than the input size.
-	 * Quantized sizes comprise the union of run sizes that back small
-	 * region runs, and run sizes that back large regions with no explicit
-	 * alignment constraints.
-	 */
-
-	if (size > SMALL_MAXCLASS) {
-		large_run_size_next = PAGE_CEILING(index2size(size2index(size -
-		    large_pad) + 1) + large_pad);
-	} else
-		large_run_size_next = SIZE_T_MAX;
-	if (size >= small_maxrun)
-		return (large_run_size_next);
-
-	while (true) {
-		size += PAGE;
-		assert(size <= small_maxrun);
-		if (small_run_tab[size >> LG_PAGE]) {
-			if (large_run_size_next < size)
-				return (large_run_size_next);
-			return (size);
-		}
-	}
-}
-
-static size_t
-run_quantize_first(size_t size)
-{
-	size_t qsize = run_quantize(size);
-
-	if (qsize < size) {
-		/*
-		 * Skip a quantization that may have an adequately large run,
-		 * because under-sized runs may be mixed in.  This only happens
-		 * when an unusual size is requested, i.e. for aligned
-		 * allocation, and is just one of several places where linear
-		 * search would potentially find sufficiently aligned available
-		 * memory somewhere lower.
-		 */
-		qsize = run_quantize_next(size);
-	}
 	return (qsize);
 }
 
@@ -174,8 +119,9 @@ arena_avail_comp(const arena_chunk_map_misc_t *a,
 {
 	int ret;
 	uintptr_t a_miscelm = (uintptr_t)a;
-	size_t a_qsize = run_quantize(arena_miscelm_is_key(a) ?
-	    arena_miscelm_key_size_get(a) : arena_miscelm_size_get(a));
+	size_t a_qsize = arena_miscelm_is_key(a) ?
+				arena_miscelm_key_size_get(a) :
+				run_quantize(arena_miscelm_size_get(a));
 	size_t b_qsize = run_quantize(arena_miscelm_size_get(b));
 
 	/*
@@ -1072,7 +1018,7 @@ arena_chunk_ralloc_huge_expand(arena_t *arena, void *chunk, size_t oldsize,
 static arena_run_t *
 arena_run_first_best_fit(arena_t *arena, size_t size)
 {
-	size_t search_size = run_quantize_first(size);
+	size_t search_size = index2size(size2index(size));
 	arena_chunk_map_misc_t *key = arena_miscelm_key_create(search_size);
 	arena_chunk_map_misc_t *miscelm =
 	    arena_avail_tree_nsearch(&arena->runs_avail, key);
