@@ -1933,6 +1933,7 @@ prof_active_set(bool active)
 	malloc_mutex_lock(&prof_active_mtx);
 	prof_active_old = prof_active;
 	prof_active = active;
+	malloc_patch_option(&prof_active);
 	malloc_mutex_unlock(&prof_active_mtx);
 	return (prof_active_old);
 }
@@ -2127,6 +2128,7 @@ prof_boot2(void)
 		lg_prof_sample = opt_lg_prof_sample;
 
 		prof_active = opt_prof_active;
+		malloc_patch_option(&prof_active);
 		if (malloc_mutex_init(&prof_active_mtx))
 			return (true);
 

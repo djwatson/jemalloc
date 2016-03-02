@@ -851,6 +851,7 @@ malloc_slow_flag_init(void)
 		malloc_slow_flags |= (in_valgrind ? flag_in_valgrind : 0);
 
 	malloc_slow = (malloc_slow_flags != 0);
+	malloc_patch_option(&malloc_slow);
 }
 
 static void
@@ -1155,7 +1156,7 @@ malloc_conf_init(void)
 			if (config_prof) {
 				CONF_HANDLE_BOOL(opt_prof, "prof", true)
 				CONF_HANDLE_CHAR_P(opt_prof_prefix,
-				    "prof_prefix", "jeprof")
+                                   "prof_prefix", "jeprof")
 				CONF_HANDLE_BOOL(opt_prof_active, "prof_active",
 				    true)
 				CONF_HANDLE_BOOL(opt_prof_thread_active_init,
@@ -1184,6 +1185,7 @@ malloc_conf_init(void)
 #undef CONF_HANDLE_CHAR_P
 		}
 	}
+	malloc_patch_option(&opt_prof);
 }
 
 /* init_lock must be held. */
@@ -1455,13 +1457,14 @@ imalloc_body(size_t size, tsd_t **tsd, size_t *usize, bool slow_path)
 	if (unlikely(ind >= NSIZES))
 		return (NULL);
 
-	if (config_stats || (config_prof && opt_prof) || (slow_path &&
-	    config_valgrind && unlikely(in_valgrind))) {
+	if (config_stats ||
+		(config_prof && malloc_option_default_off(&opt_prof)) ||
+		(slow_path && config_valgrind && unlikely(in_valgrind))) {
 		*usize = index2size(ind);
 		assert(*usize > 0 && *usize <= HUGE_MAXCLASS);
 	}
 
-	if (config_prof && opt_prof)
+	if (config_prof && malloc_option_default_off(&opt_prof))
 		return (imalloc_prof(*tsd, *usize, ind, slow_path));
 
 	return (imalloc(*tsd, size, ind, slow_path));
@@ -1496,7 +1499,7 @@ je_malloc(size_t size)
 	if (size == 0)
 		size = 1;
 
-	if (likely(!malloc_slow)) {
+	if (!malloc_option_default_on(&malloc_slow)) {
 		/*
 		 * imalloc_body() is inlined so that fast and slow paths are
 		 * generated separately with statically known slow_path.
@@ -1807,7 +1810,7 @@ ifree(tsd_t *tsd, void *ptr, tcache_t *tcache, bool slow_path)
 	assert(ptr != NULL);
 	assert(malloc_initialized() || IS_INITIALIZER);
 
-	if (config_prof && opt_prof) {
+	if (config_prof && malloc_option_default_off(&opt_prof)) {
 		usize = isalloc(ptr, config_prof);
 		prof_free(tsd, ptr, usize);
 	} else if (config_stats || config_valgrind)
@@ -1918,7 +1921,7 @@ je_free(void *ptr)
 	UTRACE(ptr, 0, 0);
 	if (likely(ptr != NULL)) {
 		tsd_t *tsd = tsd_fetch();
-		if (likely(!malloc_slow))
+		if (!malloc_option_default_on(&malloc_slow))
 			ifree(tsd, ptr, tcache_get(tsd, false), false);
 		else
 			ifree(tsd, ptr, tcache_get(tsd, false), true);

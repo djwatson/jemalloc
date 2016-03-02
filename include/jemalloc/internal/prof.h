@@ -458,7 +458,7 @@ prof_sample_accum_update(tsd_t *tsd, size_t usize, bool update,
 }
 
 JEMALLOC_ALWAYS_INLINE prof_tctx_t *
-prof_alloc_prep(tsd_t *tsd, size_t usize, bool prof_active, bool update)
+prof_alloc_prep(tsd_t *tsd, size_t usize, bool prof_unused, bool update)
 {
 	prof_tctx_t *ret;
 	prof_tdata_t *tdata;
@@ -466,8 +466,8 @@ prof_alloc_prep(tsd_t *tsd, size_t usize, bool prof_active, bool update)
 
 	assert(usize == s2u(usize));
 
-	if (!prof_active || likely(prof_sample_accum_update(tsd, usize, update,
-	    &tdata)))
+	if (!malloc_option_default_on(&prof_active) ||
+		likely(prof_sample_accum_update(tsd, usize, update, &tdata)))
 		ret = (prof_tctx_t *)(uintptr_t)1U;
 	else {
 		bt_init(&bt, tdata->vec);
