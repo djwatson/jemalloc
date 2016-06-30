@@ -466,7 +466,7 @@ prof_alloc_prep(tsd_t *tsd, size_t usize, bool prof_unused, bool update)
 
 	assert(usize == s2u(usize));
 
-	if (!malloc_option_default_on(&prof_active) ||
+	if (!malloc_PROF_ACTIVE_default_on(&prof_active) ||
 		likely(prof_sample_accum_update(tsd, usize, update, &tdata)))
 		ret = (prof_tctx_t *)(uintptr_t)1U;
 	else {

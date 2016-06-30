@@ -3,8 +3,8 @@
 #ifdef X86_64_PATCHING
 
 static void unprotect(void *addr, size_t len, int flags) {
-	uint64_t start = PAGE_ADDR2BASE(addr);
-	if (mprotect((void *) start, len + addr - start, flags)) {
+        intptr_t start = (intptr_t)PAGE_ADDR2BASE(addr);
+        if (mprotect((void *) start, len + (intptr_t)addr - start, flags)) {
 		perror("mprotect");
 		abort();
 	}
@@ -12,7 +12,7 @@ static void unprotect(void *addr, size_t len, int flags) {
 
 #define JMP_INSTR_LEN 5
 
-void malloc_patch_option(bool* option) {
+void malloc_patch_option(intptr_t key, bool* option) {
 	extern jmp_desc_t __start_jmp_table[], __stop_jmp_table[];
 	jmp_desc_t *desc;
 	int64_t offset;
@@ -24,7 +24,7 @@ void malloc_patch_option(bool* option) {
 	/* Search for jmps to modify.  Note that because of inlining,
 	 * multiple addresses may be found */
 	for (desc = __start_jmp_table; desc < __stop_jmp_table; desc++) {
-		if (desc->option != option)
+		if (desc->option != key)
 			continue;
 		offset = (desc->jump_to - desc->jump_from) - JMP_INSTR_LEN;
 		if ((offset > INT32_MAX) || (offset < INT32_MIN)) {
