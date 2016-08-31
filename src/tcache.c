@@ -21,6 +21,8 @@ static unsigned		tcaches_past;
 /* Head of singly linked list tracking available tcaches elements. */
 static tcaches_t	*tcaches_avail;
 
+struct rseq_lock rseq_lock;
+
 /******************************************************************************/
 
 size_t
@@ -31,39 +33,55 @@ tcache_salloc(tsdn_t *tsdn, const void *ptr)
 }
 
 void
-tcache_event_hard(tsd_t *tsd, tcache_t *tcache)
+tcache_event_hard(int cpu, tsd_t *tsd, tcache_t *tcache)
 {
 	szind_t binind = tcache->next_gc_bin;
 	tcache_bin_t *tbin = &tcache->tbins[binind];
 	tcache_bin_info_t *tbin_info = &tcache_bin_info[binind];
 
-	if (tbin->low_water > 0) {
+
 		/*
 		 * Flush (ceiling) 3/4 of the objects below the low water mark.
 		 */
 		if (binind < NBINS) {
-			tcache_bin_flush_small(tsd, tcache, tbin, binind,
-			    tbin->ncached - tbin->low_water + (tbin->low_water
-			    >> 2));
+                    if (cpu == rseq_percpu_cmpxchg(cpu, (intptr_t*)&tbin->lock, (intptr_t)0, (intptr_t)1)) {
+                      if (tbin->low_water > 0) {
+                        tcache_bin_flush_small(
+                          tsd, tcache, tbin, binind,
+                          tbin->ncached - tbin->low_water + (tbin->low_water
+                                                             >> 2));
+                        if ((tbin_info->ncached_max >> (tbin->lg_fill_div+1)) >= 1)
+                        tbin->lg_fill_div++;
+
+                      } else if (tbin->low_water < 0) {
+                        if (tbin->lg_fill_div > 1)
+                        tbin->lg_fill_div--;
+                      }
+                      tbin->low_water = tbin->ncached;
+                      pthread_mutex_lock(&tbin->cm);
+                      tbin->lock = 0;
+                      pthread_cond_broadcast(&tbin->c);
+                      pthread_mutex_unlock(&tbin->cm);
+                    }
 		} else {
+                    if (cpu == rseq_percpu_cmpxchg(cpu, (intptr_t*)&tbin->lock, (intptr_t)0, (intptr_t)1)) {
+                      if (tbin->low_water > 0) {
 			tcache_bin_flush_large(tsd, tbin, binind, tbin->ncached
-			    - tbin->low_water + (tbin->low_water >> 2), tcache);
+                                               - tbin->low_water + (tbin->low_water >> 2), tcache);
+                        if ((tbin_info->ncached_max >> (tbin->lg_fill_div+1)) >= 1)
+                          tbin->lg_fill_div++;
+
+                      } else if (tbin->low_water < 0) {
+                        if (tbin->lg_fill_div > 1)
+                          tbin->lg_fill_div--;
+                      }
+                      tbin->low_water = tbin->ncached;
+                      pthread_mutex_lock(&tbin->cm);
+                      tbin->lock = 0;
+                      pthread_cond_broadcast(&tbin->c);
+                      pthread_mutex_unlock(&tbin->cm);
+                    }
 		}
-		/*
-		 * Reduce fill count by 2X.  Limit lg_fill_div such that the
-		 * fill count is always at least 1.
-		 */
-		if ((tbin_info->ncached_max >> (tbin->lg_fill_div+1)) >= 1)
-			tbin->lg_fill_div++;
-	} else if (tbin->low_water < 0) {
-		/*
-		 * Increase fill count by 2X.  Make sure lg_fill_div stays
-		 * greater than 0.
-		 */
-		if (tbin->lg_fill_div > 1)
-			tbin->lg_fill_div--;
-	}
-	tbin->low_water = tbin->ncached;
 
 	tcache->next_gc_bin++;
 	if (tcache->next_gc_bin == nhbins)
@@ -71,16 +89,42 @@ tcache_event_hard(tsd_t *tsd, tcache_t *tcache)
 }
 
 void *
-tcache_alloc_small_hard(tsdn_t *tsdn, arena_t *arena, tcache_t *tcache,
+tcache_alloc_small_hard(int cpu, tsdn_t *tsdn, arena_t *arena, tcache_t *tcache,
     tcache_bin_t *tbin, szind_t binind, bool *tcache_success)
 {
-	void *ret;
+	void *ret = NULL;
 
-	arena_tcache_fill_small(tsdn, arena, tbin, binind, config_prof ?
-	    tcache->prof_accumbytes : 0);
-	if (config_prof)
-		tcache->prof_accumbytes = 0;
-	ret = tcache_alloc_easy(tbin, tcache_success);
+	if (cpu == rseq_percpu_cmpxchg(cpu, (intptr_t*)&tbin->lock, (intptr_t)0, (intptr_t)1)) {
+
+	  if (tbin->ncached != 0) {
+	    goto out;
+	  }
+
+	  arena_tcache_fill_small(tsdn, arena, tbin, binind, config_prof ?
+				  tcache->prof_accumbytes : 0);
+
+	  if (config_prof)
+	    tcache->prof_accumbytes = 0;
+
+	  if (tbin->ncached == 0) {
+	    // TODO: fix up return values
+	    malloc_printf("Out of memory\n");
+	  }
+
+	  out:
+
+
+	  pthread_mutex_lock(&tbin->cm);
+	  tbin->lock = 0;
+	  pthread_cond_broadcast(&tbin->c);
+	  pthread_mutex_unlock(&tbin->cm);
+
+	} else {
+	  pthread_mutex_lock(&tbin->cm);
+	  while(tbin->lock != 0)
+	    pthread_cond_wait(&tbin->c, &tbin->cm);
+	  pthread_mutex_unlock(&tbin->cm);
+	}
 
 	return (ret);
 }
@@ -93,13 +137,19 @@ tcache_bin_flush_small(tsd_t *tsd, tcache_t *tcache, tcache_bin_t *tbin,
 	void *ptr;
 	unsigned i, nflush, ndeferred;
 	bool merged_stats = false;
+	unsigned long cached;
+
+        if (rem > tbin->ncached)
+          return;
 
 	assert(binind < NBINS);
+        cached = tbin->ncached;
 	assert(rem <= tbin->ncached);
+	tbin->ncached = rem;
 
 	arena = arena_choose(tsd, NULL);
 	assert(arena != NULL);
-	for (nflush = tbin->ncached - rem; nflush > 0; nflush = ndeferred) {
+	for (nflush = cached - rem; nflush > 0; nflush = ndeferred) {
 		/* Lock the arena bin associated with the first object. */
 		arena_chunk_t *chunk = (arena_chunk_t *)CHUNK_ADDR2BASE(
 		    *(tbin->avail - 1));
@@ -160,11 +210,10 @@ tcache_bin_flush_small(tsd_t *tsd, tcache_t *tcache, tcache_bin_t *tbin,
 		malloc_mutex_unlock(tsd_tsdn(tsd), &bin->lock);
 	}
 
-	memmove(tbin->avail - rem, tbin->avail - tbin->ncached, rem *
+	memmove(tbin->avail - rem, tbin->avail - cached, rem *
 	    sizeof(void *));
-	tbin->ncached = rem;
-	if ((int)tbin->ncached < tbin->low_water)
-		tbin->low_water = tbin->ncached;
+	if ((int)rem < tbin->low_water)
+		tbin->low_water = rem;
 }
 
 void
@@ -175,13 +224,19 @@ tcache_bin_flush_large(tsd_t *tsd, tcache_bin_t *tbin, szind_t binind,
 	void *ptr;
 	unsigned i, nflush, ndeferred;
 	bool merged_stats = false;
+	long cached;
+
+        if (rem > tbin->ncached)
+          return;
 
 	assert(binind < nhbins);
 	assert(rem <= tbin->ncached);
+        cached = tbin->ncached;
+        tbin->ncached = rem;
 
 	arena = arena_choose(tsd, NULL);
 	assert(arena != NULL);
-	for (nflush = tbin->ncached - rem; nflush > 0; nflush = ndeferred) {
+	for (nflush = cached - rem; nflush > 0; nflush = ndeferred) {
 		/* Lock the arena associated with the first object. */
 		arena_chunk_t *chunk = (arena_chunk_t *)CHUNK_ADDR2BASE(
 		    *(tbin->avail - 1));
@@ -245,11 +300,10 @@ tcache_bin_flush_large(tsd_t *tsd, tcache_bin_t *tbin, szind_t binind,
 		malloc_mutex_unlock(tsd_tsdn(tsd), &arena->lock);
 	}
 
-	memmove(tbin->avail - rem, tbin->avail - tbin->ncached, rem *
+	memmove(tbin->avail - rem, tbin->avail - cached, rem *
 	    sizeof(void *));
-	tbin->ncached = rem;
-	if ((int)tbin->ncached < tbin->low_water)
-		tbin->low_water = tbin->ncached;
+	if ((int)rem < tbin->low_water)
+		tbin->low_water = rem;
 }
 
 static void
@@ -311,6 +365,7 @@ tcache_get_hard(tsd_t *tsd)
 	arena = arena_choose(tsd, NULL);
 	if (unlikely(arena == NULL))
 		return (NULL);
+	rseq_register_current_thread();
 	return (tcache_create(tsd_tsdn(tsd), arena));
 }
 
@@ -544,6 +599,7 @@ tcache_boot(tsdn_t *tsdn)
 			tcache_bin_info[i].ncached_max =
 			    TCACHE_NSLOTS_SMALL_MAX;
 		}
+
 		stack_nelms += tcache_bin_info[i].ncached_max;
 	}
 	for (; i < nhbins; i++) {

@@ -1393,6 +1393,8 @@ malloc_init_hard_finish(tsdn_t *tsdn)
 static bool
 malloc_init_hard(void)
 {
+        unsigned ind;
+        int i;
 	tsd_t *tsd;
 
 #if defined(_WIN32) && _WIN32_WINNT < 0x0600
@@ -1418,6 +1420,12 @@ malloc_init_hard(void)
 	if (malloc_init_hard_recursible())
 		return (true);
 	malloc_mutex_lock(tsd_tsdn(tsd), &init_lock);
+
+	rseq_register_current_thread();
+
+        for (i = 0; i < 64; i++) {
+          tcaches_create(tsd_tsdn(tsd), &ind);
+        }
 
 	if (config_prof && prof_boot2(tsd_tsdn(tsd))) {
 		malloc_mutex_unlock(tsd_tsdn(tsd), &init_lock);
