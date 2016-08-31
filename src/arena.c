@@ -2371,12 +2371,17 @@ arena_bin_malloc_hard(tsdn_t *tsdn, arena_t *arena, arena_bin_t *bin)
 	return (arena_run_reg_alloc(bin->runcur, bin_info));
 }
 
-void
+static void *
+arena_malloc_small(tsdn_t *tsdn, arena_t *arena, szind_t binind,
+		   bool zero);
+void*
 arena_tcache_fill_small(tsdn_t *tsdn, arena_t *arena, tcache_bin_t *tbin,
     szind_t binind, uint64_t prof_accumbytes)
 {
 	unsigned i, nfill;
 	arena_bin_t *bin;
+
+	return arena_malloc_small(tsdn, arena, binind, false);
 
 	assert(tbin->ncached == 0);
 
