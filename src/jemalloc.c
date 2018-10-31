@@ -19,6 +19,8 @@
 #include "jemalloc/internal/ticker.h"
 #include "jemalloc/internal/util.h"
 
+uint64_t trace_malloc(size_t size);
+uint64_t trace_free(size_t size);
 /******************************************************************************/
 /* Data. */
 
@@ -2147,7 +2149,7 @@ imalloc(static_opts_t *sopts, dynamic_opts_t *dopts) {
 		if (!tsd_get_allocates() && !imalloc_init_check(sopts, dopts)) {
 			return ENOMEM;
 		}
-          
+
 		sopts->slow = true;
 		return imalloc_body(sopts, dopts, tsd);
 	}
@@ -2160,6 +2162,9 @@ malloc_default(size_t size) {
 	dynamic_opts_t dopts;
 
 	LOG("core.malloc.entry", "size: %zu", size);
+
+        // TODO wrap
+        size += 16;
 
 	static_opts_init(&sopts);
 	dynamic_opts_init(&dopts);
@@ -2183,6 +2188,15 @@ malloc_default(size_t size) {
 	}
 
 	LOG("core.malloc.exit", "result: %p", ret);
+
+
+        if (ret) {
+          uint64_t tok = trace_malloc(size-16);
+          uint64_t* meta = (uint64_t*)ret;
+          meta[1] = tok;
+          meta[0] = 0;
+          return meta + 2;
+        }
 
 	return ret;
 }
@@ -2208,6 +2222,8 @@ void JEMALLOC_NOTHROW *
 JEMALLOC_ATTR(malloc) JEMALLOC_ALLOC_SIZE(1)
 je_malloc(size_t size) {
 	LOG("core.malloc.entry", "size: %zu", size);
+
+        return malloc_default(size);
 
 	if (tsd_get_allocates() && unlikely(!malloc_initialized())) {
 		return malloc_default(size);
@@ -2239,7 +2255,7 @@ je_malloc(size_t size) {
 		tsd_bytes_until_sample_set(tsd, bytes_until_sample);
 
 		if (unlikely(bytes_until_sample < 0)) {
-			/* 
+			/*
 			 * Avoid a prof_active check on the fastpath.
 			 * If prof_active is false, set bytes_until_sample to
 			 * a large value.  If prof_active is set to true,
@@ -2362,6 +2378,9 @@ je_calloc(size_t num, size_t size) {
 
 	LOG("core.calloc.entry", "num: %zu, size: %zu\n", num, size);
 
+        // TODO wrap
+        size += 16;
+
 	static_opts_init(&sopts);
 	dynamic_opts_init(&dopts);
 
@@ -2382,6 +2401,13 @@ je_calloc(size_t num, size_t size) {
 	}
 
 	LOG("core.calloc.exit", "result: %p", ret);
+        if (ret) {
+          uint64_t tok = trace_malloc(size-16);
+          uint64_t* meta = (uint64_t*)ret;
+          meta[1] = tok;
+          meta[0] = 0;
+          return meta + 2;
+        }
 
 	return ret;
 }
@@ -2542,6 +2568,16 @@ je_realloc(void *ptr, size_t arg_size) {
 	size_t size = arg_size;
 
 	LOG("core.realloc.entry", "ptr: %p, size: %zu\n", ptr, size);
+        // TODO wrap
+        /* arg_size += 16; */
+        /* if (ptr) { */
+        /*   uint64_t* meta = ((uint64_t*)ptr) - 2; */
+        /*   /\* uint64_t tok = meta[1]; *\/ */
+        /*   /\* trace_free(tok); *\/ */
+        /*   ptr = meta; */
+        /* } */
+        je_free(ptr);
+        return je_malloc(arg_size);
 
 	if (unlikely(size == 0)) {
 		if (ptr != NULL) {
@@ -2647,12 +2683,27 @@ je_realloc(void *ptr, size_t arg_size) {
 	check_entry_exit_locking(tsdn);
 
 	LOG("core.realloc.exit", "result: %p", ret);
+        if (ret) {
+          uint64_t tok = trace_malloc(size-16);
+          uint64_t* meta = (uint64_t*)ret;
+          meta[1] = tok;
+          meta[0] = 0;
+          return meta + 2;
+        }
+
 	return ret;
 }
 
 JEMALLOC_EXPORT void JEMALLOC_NOTHROW
 je_free(void *ptr) {
 	LOG("core.free.entry", "ptr: %p", ptr);
+
+        if (ptr) {
+          uint64_t* meta = ((uint64_t*)ptr) - 2;
+          uint64_t tok = meta[1];
+          trace_free(tok);
+          ptr = meta;
+        }
 
 	UTRACE(ptr, 0, 0);
 	if (likely(ptr != NULL)) {

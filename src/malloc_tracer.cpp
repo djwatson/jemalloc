@@ -122,6 +122,14 @@ static MallocTracer *get_first_tracer() {
   return reinterpret_cast<MallocTracer *>(&first_tracer_space.s);
 }
 
+extern "C" {
+  uint64_t trace_malloc(size_t size) {
+    return MallocTracer::GetInstance()->TraceMalloc(size);
+  }
+  void trace_free(uint64_t tok) {
+    MallocTracer::GetInstance()->TraceFree(tok);
+  }
+}
 void MallocTracer::MallocTracerDestructor(void *arg) {
 //  CHECK_CONDITION(!had_tracer);
 
