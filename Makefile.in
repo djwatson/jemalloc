@@ -245,10 +245,10 @@ ifeq (@enable_cxx@, 1)
 CPP_SRCS := $(srcroot)src/jemalloc_cpp.cpp
 TESTS_INTEGRATION_CPP := $(srcroot)test/integration/cpp/basic.cpp
 else
-CPP_SRCS := $(srcroot)src/altvarint_codec.cpp
-# $(srcroot)src/malloc_trace_encoder.cc \
-# $(srcroot)src/malloc_tracer.cc \
-# $(srcroot)src/tracer_buffer.cc
+CPP_SRCS := $(srcroot)src/altvarint_codec.cpp \
+		 $(srcroot)src/malloc_trace_encoder.cpp \
+		$(srcroot)src/tracer_buffer.cpp \
+		$(srcroot)src/malloc_tracer.cpp
 TESTS_INTEGRATION_CPP :=
 endif
 TESTS_STRESS := $(srcroot)test/stress/microbench.c \

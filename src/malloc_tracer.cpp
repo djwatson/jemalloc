@@ -27,9 +27,12 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#include "config.h"
 
-#include "malloc_tracer.h"
+#include "jemalloc/internal/malloc_tracer.h"
+
+#include "jemalloc/internal/jemalloc_preamble.h"
+#include "jemalloc/internal/jemalloc_internal_includes.h"
+#include "jemalloc/internal/mutex.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -44,12 +47,9 @@
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
+#include <new>
 
-#include "base/googleinit.h"
-#include "base/spinlock.h"
-#include "internal_logging.h"
-#include "page_heap_allocator.h"
-#include "tracer_buffer.h"
+#include "jemalloc/internal/tracer_buffer.h"
 
 namespace tcmalloc {
 
@@ -57,7 +57,36 @@ static const int kDumperPeriodMicros = 3000;
 
 static const int kTokenSize = 1 << 10;
 
-static SpinLock lock(base::LINKER_INITIALIZED);
+//static SpinLock lock(base::LINKER_INITIALIZED);
+static pthread_mutex_t lock;
+
+class SpinLockHolder {
+ public:
+  SpinLockHolder(pthread_mutex_t* ll): l(ll) {
+    pthread_mutex_lock(l);
+  }
+  ~SpinLockHolder() {
+    pthread_mutex_unlock(l);
+  }
+ private:
+  pthread_mutex_t* l;
+};
+
+template <typename T>
+class PageHeapAllocator {
+ public:
+  void Delete(T* addr) {
+    munmap(addr, sz << 12);
+  }
+  void Init() {
+    sz = (sizeof(T) + 4095) >> 12;
+  }
+  T* New() {
+    return (T*)mmap(NULL, sz << 12, PROT_READ | PROT_WRITE, MAP_PRIVATE| MAP_ANONYMOUS, 0, 0);
+  }
+ private:
+  size_t sz;
+};
 
 static uint64_t token_counter;
 static uint64_t thread_id_counter;
@@ -65,8 +94,8 @@ static uint64_t thread_dump_written;
 
 static uint64_t base_ts;
 
-__thread MallocTracer* MallocTracer::instance_ ATTR_INITIAL_EXEC;
-__thread bool had_tracer ATTR_INITIAL_EXEC;
+__thread MallocTracer* MallocTracer::instance_ ;
+__thread bool had_tracer ;
 
 MallocTracer* MallocTracer::all_tracers_;
 
@@ -80,7 +109,7 @@ static TracerBuffer* tracer_buffer;
 
 static bool no_more_writes;
 
-COMPILE_ASSERT(sizeof(MallocTracer) == 4096, malloc_tracer_is_4k);
+//COMPILE_ASSERT(sizeof(MallocTracer) == 4096, malloc_tracer_is_4k);
 
 static union {
   struct {
@@ -94,7 +123,7 @@ static MallocTracer *get_first_tracer() {
 }
 
 void MallocTracer::MallocTracerDestructor(void *arg) {
-  CHECK_CONDITION(!had_tracer);
+//  CHECK_CONDITION(!had_tracer);
 
   MallocTracer** instanceptr =
       reinterpret_cast<MallocTracer **>(arg);
@@ -144,7 +173,7 @@ void MallocTracer::SetupFirstTracer() {
 }
 
 // in_setup guards cases of malloc calls during DoSetupTLS
-static __thread bool in_setup ATTR_INITIAL_EXEC;
+static __thread bool in_setup ;
 
 void MallocTracer::DoSetupTLS() {
   in_setup = true;
@@ -157,7 +186,7 @@ void MallocTracer::DoSetupTLS() {
   malloc_tracer_allocator.Init();
   int rv = pthread_key_create(&instance_key,
                               &MallocTracer::MallocTracerDestructor);
-  CHECK_CONDITION(!rv);
+//  CHECK_CONDITION(!rv);
 
   in_setup = false;
 }
@@ -170,6 +199,8 @@ static void *dumper_thread(void *__dummy) {
   return NULL;
 }
 
+extern "C" {
+__attribute__((constructor))
 static void malloc_tracer_setup_tail() {
   (void)MallocTracer::GetInstance();
 
@@ -178,11 +209,11 @@ static void malloc_tracer_setup_tail() {
   if (rv != 0) {
     errno = rv;
     perror("pthread_create");
-    CHECK_CONDITION(rv == 0);
+//    CHECK_CONDITION(rv == 0);
   }
 }
-
-REGISTER_MODULE_INITIALIZER(setup_tail, malloc_tracer_setup_tail());
+}
+//REGISTER_MODULE_INITIALIZER(setup_tail, malloc_tracer_setup_tail());
 
 MallocTracer *MallocTracer::GetInstanceSlow(void) {
   pthread_once(&first_tracer_setup_once, MallocTracer::SetupFirstTracer);
@@ -400,7 +431,7 @@ static void finalize_tracing() {
   char encoded_end[16];
   char *p = encoded_end;
   p = AltVarintCodec::encode_unsigned(p, MallocTraceEncoder::encode_end());
-  ASSERT(p <= encoded_end + sizeof(encoded_end));
+//  ASSERT(p <= encoded_end + sizeof(encoded_end));
 
   tracer_buffer->AppendData(encoded_end, p - encoded_end);
   tracer_buffer->Finalize();

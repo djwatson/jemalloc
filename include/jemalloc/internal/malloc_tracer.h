@@ -30,7 +30,6 @@
 
 #ifndef TCMALLOC_MALLOC_TRACER_H_
 #define TCMALLOC_MALLOC_TRACER_H_
-#include "config.h"
 
 #include <stddef.h>                     // for size_t, NULL
 #ifdef HAVE_STDINT_H
@@ -38,7 +37,6 @@
 #endif
 
 #include "altvarint_codec.h"
-#include "base/basictypes.h"
 #include "malloc_trace_encoder.h"
 
 namespace tcmalloc {
@@ -112,11 +110,11 @@ class MallocTracer {
   MallocTracer* next;
   MallocTracer** pprev;
 
-  static __thread MallocTracer* instance_ ATTR_INITIAL_EXEC;
+  static __thread MallocTracer* instance_;
   static MallocTracer *all_tracers_;
 };
 
-inline ATTRIBUTE_ALWAYS_INLINE
+inline
 MallocTracer *MallocTracer::GetInstance() {
   if (instance_) {
     return instance_;
@@ -124,9 +122,9 @@ MallocTracer *MallocTracer::GetInstance() {
   return GetInstanceSlow();
 }
 
-inline ATTRIBUTE_ALWAYS_INLINE
+inline
 void MallocTracer::AppendWords(int count, uint64_t first, uint64_t second) {
-  if (PREDICT_FALSE(!HasSpaceFor(count))) {
+  if ((!HasSpaceFor(count))) {
     RefreshBuffer();
   }
 
@@ -140,7 +138,7 @@ void MallocTracer::AppendWords(int count, uint64_t first, uint64_t second) {
   SetBufPtr(p);
 }
 
-inline ATTRIBUTE_ALWAYS_INLINE
+inline
 uint64_t MallocTracer::TraceMalloc(size_t size) {
   if (!--counter_) {
     RefreshTokenAndDec();
@@ -152,19 +150,19 @@ uint64_t MallocTracer::TraceMalloc(size_t size) {
   return token;
 }
 
-inline ATTRIBUTE_ALWAYS_INLINE
+inline
 void MallocTracer::TraceFree(uint64_t token) {
   uint64_t to_encode = MallocTraceEncoder::encode_free(token, &prev_token_);
   AppendWords(1, to_encode, to_encode);
 }
 
-inline ATTRIBUTE_ALWAYS_INLINE
+inline
 void MallocTracer::TraceFreeSized(uint64_t token) {
   uint64_t to_encode = MallocTraceEncoder::encode_free_sized(token, &prev_token_);
   AppendWords(1, to_encode, to_encode);
 }
 
-inline ATTRIBUTE_ALWAYS_INLINE
+inline
 uint64_t MallocTracer::TraceRealloc(uint64_t old_token, size_t new_size) {
   if (!--counter_) {
     RefreshTokenAndDec();
@@ -178,7 +176,7 @@ uint64_t MallocTracer::TraceRealloc(uint64_t old_token, size_t new_size) {
   return token;
 }
 
-inline ATTRIBUTE_ALWAYS_INLINE
+inline
 uint64_t MallocTracer::TraceMemalign(size_t size, size_t alignment) {
   if (!--counter_) {
     RefreshTokenAndDec();

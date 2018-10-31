@@ -27,9 +27,7 @@
 // THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-#include "config.h"
-
-#include "tracer_buffer.h"
+#include "jemalloc/internal/tracer_buffer.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -49,11 +47,9 @@
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
+#include <new>
 
-#include "base/atomicops.h"
-#include "base/googleinit.h"
-#include "internal_logging.h"
-#include "malloc_tracer.h"
+#include "jemalloc/internal/malloc_tracer.h"
 
 namespace tcmalloc {
 
@@ -84,7 +80,7 @@ static sem_t ready_sem[kBufsCount];
 
 static uint64_t total_saved;
 
-static AtomicWord fully_setup;
+static uint32_t fully_setup;
 
 class Writer {
  public:
@@ -308,6 +304,9 @@ static Writer* open_trace_output() {
 #endif
 }
 
+extern "C" {
+
+__attribute__((constructor))
 static void do_setup_tail() {
   (void)TracerBuffer::GetInstance();
 
@@ -323,10 +322,10 @@ static void do_setup_tail() {
   }
   sem_wait(&saver_thread_sem);
 
-  base::subtle::Release_Store(&fully_setup, 1);
+  //base::subtle::Release_Store(&fully_setup, 1);
+  fully_setup = 1;
 }
-
-REGISTER_MODULE_INITIALIZER(setup_buf_tail, do_setup_tail());
+}
 
 class ActualTracerBuffer : public TracerBuffer {
  public:
@@ -356,7 +355,7 @@ ActualTracerBuffer::ActualTracerBuffer() {
 }
 
 void ActualTracerBuffer::RefreshInternal(int to_write) {
-  CHECK_CONDITION(fd_buf[write_buf] == start);
+  //CHECK_CONDITION(fd_buf[write_buf] == start);
 
   int tail = current - start - to_write;
 
@@ -391,7 +390,7 @@ void ActualTracerBuffer::Finalize() {
 }
 
 bool ActualTracerBuffer::IsFullySetup() {
-  return base::subtle::Acquire_Load(&fully_setup);
+  return fully_setup;
 }
 
 TracerBuffer::~TracerBuffer() {}
@@ -412,7 +411,7 @@ TracerBuffer* TracerBuffer::GetInstance() {
       sem_init(ready_sem + i, 0, 0);
     }
 
-    new (&space) ActualTracerBuffer();
+    new ((void*)&space) ActualTracerBuffer();
     initialized = true;
   }
 

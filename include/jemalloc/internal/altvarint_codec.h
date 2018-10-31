@@ -30,12 +30,11 @@
 
 #ifndef TCMALLOC_ALTVARINT_CODEC_H_
 #define TCMALLOC_ALTVARINT_CODEC_H_
-#include "config.h"
 
 #include <stdint.h>
 #include <string.h>
 
-#include "base/basictypes.h"
+
 
 namespace tcmalloc {
 
@@ -112,9 +111,9 @@ inline char *AltVarintCodec::encode_signed(char *place, int64_t val) {
   return encode_unsigned(place, zigzag(val));
 }
 
-inline ATTRIBUTE_ALWAYS_INLINE
+inline /* TODO JEMALLOC_ALWAYS_INLINE*/
 char *AltVarintCodec::encode_unsigned(char *place, uint64_t val) {
-  if (PREDICT_FALSE((val >> 56) != 0)) {
+  if (/*PREDICT_FALSE*/((val >> 56) != 0)) {
     uint8_t high = val >> 56;
     val = (val << 8);
     memcpy(place, &val, sizeof(val));
@@ -125,7 +124,7 @@ char *AltVarintCodec::encode_unsigned(char *place, uint64_t val) {
   val = (val << 1) | 1;
 
   // note, this is +1 due to shift above
-  static uint8_t encode_bits[64] CACHELINE_ALIGNED = {
+  static uint8_t encode_bits[64] /* TODO CACHELINE_ALIGNED*/ = {
     0, 0, 0, 0, 0, 0, 0, 0,
     1, 1, 1, 1, 1, 1, 1, 2,
     2, 2, 2, 2, 2, 2, 3, 3,
@@ -175,7 +174,7 @@ inline AltVarintCodec::DecodeResult<uint64_t> AltVarintCodec::decode_unsigned(
 
   // 9 bytes case is when all 8 lowest bits are 0. This is special case
   // when no leading bit is encoded.
-  if (PREDICT_FALSE(!(val & 0xff))) {
+  if (/*PREDICT_FALSE*/(!(val & 0xff))) {
     memcpy(&val, place + 1, 8);
     return DecodeResult<uint64_t>::make(9, val);
   }

@@ -32,8 +32,7 @@
 #define TCMALLOC_TRACER_BUFFER_H_
 #include <stdlib.h>
 #include <string.h>
-
-#include "internal_logging.h"
+#include <assert.h>
 
 namespace tcmalloc {
 
@@ -46,12 +45,12 @@ struct TracerBuffer {
   virtual bool IsFullySetup() = 0;
 
   void AppendData(const char* buf, size_t size) {
-    ASSERT(size <= kMinSizeAfterRefresh);
+    assert(size <= kMinSizeAfterRefresh);
 
     if (limit - current < size) {
       Refresh();
     }
-    ASSERT(limit - current >= size);
+    assert(limit - current >= size);
 
     memcpy(current, buf, size);
     current += size;
