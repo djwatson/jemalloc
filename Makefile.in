@@ -33,7 +33,7 @@ CONFIGURE_CXXFLAGS := @CONFIGURE_CXXFLAGS@
 SPECIFIED_CXXFLAGS := @SPECIFIED_CXXFLAGS@
 EXTRA_CXXFLAGS := @EXTRA_CXXFLAGS@
 CXXFLAGS := $(strip $(CONFIGURE_CXXFLAGS) $(SPECIFIED_CXXFLAGS) $(EXTRA_CXXFLAGS))
-LDFLAGS := @LDFLAGS@
+LDFLAGS := @LDFLAGS@ -lstdc++
 EXTRA_LDFLAGS := @EXTRA_LDFLAGS@
 LIBS := @LIBS@
 RPATH_EXTRA := @RPATH_EXTRA@
@@ -414,7 +414,7 @@ $(STATIC_LIBS):
 	@mkdir -p $(@D)
 	$(AR) $(ARFLAGS)@AROUT@ $+
 
-$(objroot)test/unit/%$(EXE): $(objroot)test/unit/%.$(O) $(C_JET_OBJS) $(C_TESTLIB_UNIT_OBJS)
+$(objroot)test/unit/%$(EXE): $(objroot)test/unit/%.$(O) $(C_JET_OBJS) $(C_TESTLIB_UNIT_OBJS) $(CPP_OBJS)
 	@mkdir -p $(@D)
 	$(CC) $(LDTARGET) $(filter %.$(O),$^) $(call RPATH,$(objroot)lib) $(LDFLAGS) $(filter-out -lm,$(LIBS)) $(LM) $(EXTRA_LDFLAGS)
 

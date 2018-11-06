@@ -88,7 +88,7 @@ class PageHeapAllocator {
   size_t sz;
 };
 
-static uint64_t token_counter;
+static uint64_t token_counter = 1;
 static uint64_t thread_id_counter;
 static uint64_t thread_dump_written;
 
@@ -276,11 +276,16 @@ MallocTracer::MallocTracer(uint64_t thread_id) {
   RefreshToken();
 }
 
+static uint64_t total_size = 0;
+
+static void finalize_tracing();
+
 static void append_buf_locked(const char *buf, size_t size) {
   if (no_more_writes) {
     return;
   }
   tracer_buffer->AppendData(buf, size);
+  total_size += size;
 }
 
 uint64_t MallocTracer::UpdateTSAndCPU() {
@@ -303,15 +308,20 @@ void MallocTracer::RefreshBufferInnerLocked(uint64_t size, uint64_t ts_and_cpu) 
 }
 
 void MallocTracer::RefreshBuffer() {
-  SpinLockHolder h(&lock);
+  {
+    SpinLockHolder h(&lock);
 
-  if (buf_ptr_ != signal_saved_buf_ptr_) {
-    RefreshBufferInnerLocked(buf_ptr_ - signal_saved_buf_ptr_,
-                             UpdateTSAndCPU());
+    if (buf_ptr_ != signal_saved_buf_ptr_) {
+      RefreshBufferInnerLocked(buf_ptr_ - signal_saved_buf_ptr_,
+                               UpdateTSAndCPU());
+    }
+
+    SetBufPtr(buf_storage_);
+    signal_saved_buf_ptr_ = buf_storage_;
   }
-
-  SetBufPtr(buf_storage_);
-  signal_saved_buf_ptr_ = buf_storage_;
+  if (!no_more_writes && (total_size >= 1024*1024*1024)) {
+    finalize_tracing();
+  }
 }
 
 void MallocTracer::DumpFromSaverThread() {
@@ -433,8 +443,12 @@ static void finalize_tracing() {
   // further buffer writes.
   {
     SpinLockHolder h(&lock);
+    if (no_more_writes) {
+      return;
+    }
     no_more_writes = true;
   }
+  printf("TRACING FINALIZED\n");
 
   char encoded_end[16];
   char *p = encoded_end;

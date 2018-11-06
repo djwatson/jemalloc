@@ -112,6 +112,7 @@ class MallocTracer {
 
   static __thread MallocTracer* instance_;
   static MallocTracer *all_tracers_;
+
 };
 
 inline
