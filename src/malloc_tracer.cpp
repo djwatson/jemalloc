@@ -448,7 +448,6 @@ static void finalize_tracing() {
     }
     no_more_writes = true;
   }
-  printf("TRACING FINALIZED\n");
 
   char encoded_end[16];
   char *p = encoded_end;

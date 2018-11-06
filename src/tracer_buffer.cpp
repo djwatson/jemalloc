@@ -249,7 +249,7 @@ static void *saver_thread(void *_arg) {
     p += snprintf(p, buf + sizeof(buf) - p,
                   "total_saved = %llu\n", (unsigned long long)total_saved);
     MallocTracer::SPrintStats(p, buf + sizeof(buf));
-    fprintf(stderr, "%s", buf);
+    //fprintf(stderr, "%s", buf);
   }
 
   // we've hit to_save = 0 case above and exited loop without
