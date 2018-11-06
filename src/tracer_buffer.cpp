@@ -260,12 +260,21 @@ static void *saver_thread(void *_arg) {
   return 0;
 }
 
+    extern "C" {
+      extern const char *__progname;
+    }
 static Writer* open_trace_output() {
   int fd = -1;
 
+  char buffer[4096];
   char *filename = getenv("TCMALLOC_TRACE_OUTPUT");
   if (filename == NULL) {
-    return NULL;
+    snprintf(buffer, 4096, "/var/tmp/%s.trace.%i", __progname, getpid());
+    filename = buffer;
+  }
+
+  if (filename) {
+    printf("Trace to %s\n", filename);
   }
 
   unsetenv("TCMALLOC_TRACE_OUTPUT");
