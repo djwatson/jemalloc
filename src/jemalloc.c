@@ -2606,6 +2606,10 @@ je_realloc(void *ptr, size_t arg_size) {
 	size_t old_usize = 0;
 	size_t size = arg_size;
 
+        if (arg_size >= SIZE_T_MAX >> 2) {
+          errno = 12;
+          return NULL;
+        }
 	LOG("core.realloc.entry", "ptr: %p, size: %zu\n", ptr, size);
         je_free(ptr);
         return je_malloc(arg_size);
@@ -3503,6 +3507,13 @@ JEMALLOC_ALWAYS_INLINE size_t
 inallocx(tsdn_t *tsdn, size_t size, int flags) {
 	check_entry_exit_locking(tsdn);
 
+        /* size_t offset = 16; */
+        /* if ((flags & MALLOCX_LG_ALIGN_MASK) != 0) { */
+        /*   size_t alignment = MALLOCX_ALIGN_GET_SPECIFIED(flags); */
+        /*   if (alignment > offset) offset = alignment; */
+        /* } */
+        /* size += offset; */
+        
 	size_t usize;
 	if (likely((flags & MALLOCX_LG_ALIGN_MASK) == 0)) {
 		usize = sz_s2u(size);
@@ -3518,12 +3529,18 @@ je_sdallocx(void *ptr, size_t size, int flags) {
 	assert(ptr != NULL);
 	assert(malloc_initialized() || IS_INITIALIZER);
 
+        size_t offset = 16;
+        if ((flags & MALLOCX_LG_ALIGN_MASK) != 0) {
+          size_t alignment = MALLOCX_ALIGN_GET_SPECIFIED(flags);
+          if (alignment > offset) offset = alignment;
+        }
+        size += offset;
+        
         if (ptr) {
           uint64_t* meta = ((uint64_t*)ptr) - 2;
           uint64_t tok = meta[1];
           trace_free_sized(tok);
           ptr = (void*)meta[0];
-          size += sizeof(uint64_t) * 2;
         }
 
 	LOG("core.sdallocx.entry", "ptr: %p, size: %zu, flags: %d", ptr,

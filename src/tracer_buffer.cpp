@@ -273,10 +273,6 @@ static Writer* open_trace_output() {
     filename = buffer;
   }
 
-  if (filename) {
-    printf("Trace to %s\n", filename);
-  }
-
   unsetenv("TCMALLOC_TRACE_OUTPUT");
 
   // O_NONBLOCK is for named pipes
