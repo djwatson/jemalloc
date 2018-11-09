@@ -2619,7 +2619,9 @@ je_realloc(void *ptr, size_t arg_size) {
           return je_malloc(arg_size);
         }
         void* res = je_malloc(arg_size);
-        memcpy(res, ptr, je_sallocx(ptr, 0));
+        size_t amt = je_sallocx(ptr, 0);
+        if (amt > arg_size) amt = arg_size;
+        memcpy(res, ptr, amt);
         je_free(ptr);
         return res;
 
@@ -3196,7 +3198,9 @@ je_rallocx(void *ptr, size_t size, int flags) {
           return je_mallocx(size, flags);
         }
         void* ret = je_mallocx(size, flags);
-        memcpy(ret, ptr, je_sallocx(ptr, flags));
+        size_t amt = je_sallocx(ptr, flags);
+        if (amt > size) amt = size;
+        memcpy(ret, ptr, amt);
         je_dallocx(ptr, flags);
         return ret;
 
