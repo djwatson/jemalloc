@@ -2611,8 +2611,17 @@ je_realloc(void *ptr, size_t arg_size) {
           return NULL;
         }
 	LOG("core.realloc.entry", "ptr: %p, size: %zu\n", ptr, size);
+        if (arg_size == 0) {
+          je_free(ptr);
+          return NULL;
+        }
+        if (!ptr) {
+          return je_malloc(arg_size);
+        }
+        void* res = je_malloc(arg_size);
+        memcpy(res, ptr, je_sallocx(ptr, 0));
         je_free(ptr);
-        return je_malloc(arg_size);
+        return res;
 
 	if (unlikely(size == 0)) {
 		if (ptr != NULL) {
@@ -3179,8 +3188,18 @@ je_rallocx(void *ptr, size_t size, int flags) {
 	arena_t *arena;
 	tcache_t *tcache;
 
+        if (size == 0) {
+          je_dallocx(ptr, flags);
+          return NULL;
+        }
+        if (!ptr) {
+          return je_mallocx(size, flags);
+        }
+        void* ret = je_mallocx(size, flags);
+        memcpy(ret, ptr, je_sallocx(ptr, flags));
         je_dallocx(ptr, flags);
-        return je_mallocx(size, flags);
+        return ret;
+
 	LOG("core.rallocx.entry", "ptr: %p, size: %zu, flags: %d", ptr,
 	    size, flags);
 
