@@ -19,6 +19,9 @@
 #include "jemalloc/internal/ticker.h"
 #include "jemalloc/internal/util.h"
 
+void trace_prefork();
+void trace_postfork_child();
+void trace_postfork_parent();
 uint64_t trace_malloc(size_t size);
 uint64_t trace_free(size_t size);
 void trace_free_sized(uint64_t tok);
@@ -3854,6 +3857,7 @@ _malloc_prefork(void)
 		}
 	}
 	prof_prefork1(tsd_tsdn(tsd));
+        trace_prefork();
 	tsd_prefork(tsd);
 }
 
@@ -3861,7 +3865,7 @@ _malloc_prefork(void)
 void
 jemalloc_postfork_parent(void)
 #else
-JEMALLOC_EXPORT void
+ppJEMALLOC_EXPORT void
 _malloc_postfork(void)
 #endif
 {
@@ -3878,6 +3882,7 @@ _malloc_postfork(void)
 	tsd = tsd_fetch();
 
 	tsd_postfork_parent(tsd);
+        trace_postfork_parent();
 
 	witness_postfork_parent(tsd_witness_tsdp_get(tsd));
 	/* Release all mutexes, now that fork() has completed. */
@@ -3897,6 +3902,7 @@ _malloc_postfork(void)
 	ctl_postfork_parent(tsd_tsdn(tsd));
 }
 
+
 void
 jemalloc_postfork_child(void) {
 	tsd_t *tsd;
@@ -3907,6 +3913,7 @@ jemalloc_postfork_child(void) {
 	tsd = tsd_fetch();
 
 	tsd_postfork_child(tsd);
+        trace_postfork_child();
 
 	witness_postfork_child(tsd_witness_tsdp_get(tsd));
 	/* Release all mutexes, now that fork() has completed. */

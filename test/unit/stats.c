@@ -223,7 +223,7 @@ TEST_END
 
 static void
 gen_mallctl_str(char *cmd, char *name, unsigned arena_ind) {
-	sprintf(cmd, "stats.arenas.%u.bins.0.%s", arena_ind, name);
+	sprintf(cmd, "stats.arenas.%u.bins.2.%s", arena_ind, name);
 }
 
 TEST_BEGIN(test_stats_arenas_bins) {

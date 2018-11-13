@@ -60,6 +60,19 @@ static const int kTokenSize = 1 << 10;
 //static SpinLock lock(base::LINKER_INITIALIZED);
 static pthread_mutex_t lock;
 
+extern "C" {
+void  trace_prefork() {
+    pthread_mutex_lock(&lock);
+}
+
+void trace_postfork_parent() {
+    pthread_mutex_unlock(&lock);
+}
+void trace_postfork_child() {
+    pthread_mutex_unlock(&lock);
+}
+}
+
 class SpinLockHolder {
  public:
   SpinLockHolder(pthread_mutex_t* ll): l(ll) {
