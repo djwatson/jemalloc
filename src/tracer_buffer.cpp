@@ -29,10 +29,13 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "jemalloc/internal/tracer_buffer.h"
 
+#define USE_LZ4 1
+
 #include <errno.h>
 #include <fcntl.h>
 #if USE_LZ4
 #include <lz4frame.h>
+#include <zstd.h>
 #endif
 #include <malloc.h>
 #include <netdb.h>
@@ -144,6 +147,7 @@ class LZ4Compressor : public Writer {
   LZ4F_cctx* lzctx_;
   Writer* const slave_;
   char buffer_[4<<20] __attribute__((aligned(4096)));
+  ZSTD_CStream* cstream;
 };
 
 const int LZ4Compressor::kBlockSize;
@@ -151,20 +155,18 @@ const int LZ4Compressor::kMinAmountToSave;
 
 LZ4Compressor::LZ4Compressor(Writer* slave)
     : buf_tail_(0), slave_(slave) {
-  LZ4F_errorCode_t err = LZ4F_createCompressionContext(&lzctx_, LZ4F_VERSION);
-  if (err != 0) {
-    abort();
+  cstream = ZSTD_createCStream();
+  if (!cstream) abort();
+  size_t const initResult = ZSTD_initCStream(cstream, 1);
+  if (ZSTD_isError(initResult)) {
+    fprintf(stderr, "ZSTD_initCStream() error : %s \n",
+            ZSTD_getErrorName(initResult));
+    exit(11);
   }
-
-  LZ4F_preferences_t prefs;
-  memset(&prefs, 0, sizeof(prefs));
-  prefs.frameInfo.blockMode = LZ4F_blockIndependent;
-
-  buf_tail_ = LZ4F_compressBegin(lzctx_, buffer_, sizeof(buffer_), &prefs);
 }
 
 LZ4Compressor::~LZ4Compressor() {
-  LZ4F_freeCompressionContext(lzctx_);
+  ZSTD_freeCStream(cstream);
 }
 
 void LZ4Compressor::Write(const char* data, size_t amount) {
@@ -173,14 +175,20 @@ void LZ4Compressor::Write(const char* data, size_t amount) {
     if (this_write > amount) {
       this_write = amount;
     }
-    size_t written = LZ4F_compressUpdate(lzctx_,
-                                         buffer_ + buf_tail_,
-                                         sizeof(buffer_) - buf_tail_,
-                                         data, this_write,
-                                         NULL);
-    if (LZ4F_isError(written)) {
-      abort();
+    ZSTD_inBuffer input = { data, this_write, 0 };
+    ZSTD_outBuffer output = { buffer_ + buf_tail_, sizeof(buffer_) - buf_tail_, 0 };
+    size_t toRead = ZSTD_compressStream(cstream, &output , &input);   /* toRead is guaranteed to be <= ZSTD_CStreamInSize() */
+    if (ZSTD_isError(toRead)) {
+      fprintf(stderr, "ZSTD_compressStream() error : %s \n",
+              ZSTD_getErrorName(toRead));
+      exit(12);
     }
+    if (input.pos != this_write) {
+      fprintf(stderr, "ZSTD did not read all data %li %li wrote %li %li tot %li\n", toRead, this_write,
+              sizeof(buffer_), output.pos, output.pos + buf_tail_);
+      exit(12);
+    }
+    size_t written = output.pos;
 
     buf_tail_ += written;
     data += this_write;
@@ -198,11 +206,13 @@ void LZ4Compressor::Write(const char* data, size_t amount) {
 void LZ4Compressor::WriteLast(const char* data, size_t amount) {
   Write(data, amount);
 
-  size_t written = LZ4F_compressEnd(lzctx_, buffer_ + buf_tail_,
-                                    sizeof(buffer_) - buf_tail_, NULL);
-  if (LZ4F_isError(written)) {
-    abort();
+  ZSTD_outBuffer output = { buffer_ + buf_tail_, sizeof(buffer_) - buf_tail_, 0 };
+  size_t const remainingToFlush = ZSTD_endStream(cstream, &output);   /* close frame */
+  if (remainingToFlush) {
+    fprintf(stderr, "ZSTD did not flush all bytes? %li\n", remainingToFlush);
+    exit(14);
   }
+  size_t written = output.pos;
   buf_tail_ += written;
 
   slave_->WriteLast(buffer_, buf_tail_);
@@ -267,9 +277,17 @@ static Writer* open_trace_output() {
   int fd = -1;
 
   char buffer[4096];
+  char noext[] = "";
+  char* ext = noext;
+  char zext[] = ".zst";
   char *filename = getenv("TCMALLOC_TRACE_OUTPUT");
   if (filename == NULL) {
-    snprintf(buffer, 4096, "/var/tmp/%s.trace.%i", __progname, getpid());
+#if USE_LZ4
+    if (!getenv("TCMALLOC_TRACE_UNCOMPRESSED")) {
+      ext = zext;
+    }
+#endif
+    snprintf(buffer, 4096, "/var/tmp/%s.trace.%i%s", __progname, getpid(), ext);
     filename = buffer;
   }
 
