@@ -2173,7 +2173,7 @@ malloc_default(size_t size) {
           errno = 12;
           return NULL;
         }
-        size += 16;
+        size += 8;
 
 	static_opts_init(&sopts);
 	dynamic_opts_init(&dopts);
@@ -2200,11 +2200,10 @@ malloc_default(size_t size) {
 
 
         if (ret) {
-          uint64_t tok = trace_malloc(size-16);
-          uint64_t* meta = (uint64_t*)ret;
-          meta[1] = tok;
-          meta[0] = (uint64_t)ret;
-          return meta + 2;
+          uint64_t tok = trace_malloc(size-8);
+          size_t usize = je_sallocx(ret, 0);
+          uint64_t* meta = (uint64_t*)((char*)ret + usize);
+          meta[0] = tok;
         }
 
 	return ret;
@@ -2309,14 +2308,7 @@ je_posix_memalign(void **memptr, size_t alignment, size_t size) {
 	LOG("core.posix_memalign.entry", "mem ptr: %p, alignment: %zu, "
 	    "size: %zu", memptr, alignment, size);
 
-        size_t offset = 16;
-        if (offset < alignment) offset = alignment;
-        if (size >= 18446744073709551600UL - offset) {
-          errno = 12;
-          *memptr = NULL;
-          return -1;
-        }
-        size += offset;
+        size += 8;
 
 	static_opts_init(&sopts);
 	dynamic_opts_init(&dopts);
@@ -2343,11 +2335,10 @@ je_posix_memalign(void **memptr, size_t alignment, size_t size) {
 	LOG("core.posix_memalign.exit", "result: %d, alloc ptr: %p", ret,
 	    *memptr);
         if (*memptr && !ret) {
-          uint64_t tok = trace_memalign(size-offset, alignment);
-          uint64_t* meta = (uint64_t*)(((char*)*memptr) + offset - 16);
-          meta[1] = tok;
-          meta[0] = (uint64_t)*memptr;
-          *memptr = (char*)*memptr + offset;
+          uint64_t tok = trace_memalign(size-8, alignment);
+          size_t usize = je_sallocx(*memptr, 0);
+          uint64_t* meta = (uint64_t*)((char*)*memptr + usize);
+          meta[0] = tok;
         }
 
 	return ret;
@@ -2362,13 +2353,7 @@ je_aligned_alloc(size_t alignment, size_t size) {
 	static_opts_t sopts;
 	dynamic_opts_t dopts;
 
-        size_t offset = 16;
-        if (offset < alignment) offset = alignment;
-        if (size >= 18446744073709551600UL - offset) {
-          errno = 12;
-          return NULL;
-        }
-        size += offset;
+        size += 8;
 	LOG("core.aligned_alloc.entry", "alignment: %zu, size: %zu\n",
 	    alignment, size);
 
@@ -2397,11 +2382,10 @@ je_aligned_alloc(size_t alignment, size_t size) {
 
 	LOG("core.aligned_alloc.exit", "result: %p", ret);
         if (ret) {
-          uint64_t tok = trace_memalign(size-offset, alignment);
-          uint64_t* meta = (uint64_t*)(((char*)ret) + offset - 16);
-          meta[1] = tok;
-          meta[0] = (uint64_t)ret;
-          return (char*)ret + offset;
+          uint64_t tok = trace_memalign(size-8, alignment);
+          size_t usize = je_sallocx(ret, 0);
+          uint64_t* meta = (uint64_t*)((char*)ret + usize);
+          meta[0] = tok;
         }
 
 	return ret;
@@ -2417,11 +2401,7 @@ je_calloc(size_t num, size_t size) {
 
 	LOG("core.calloc.entry", "num: %zu, size: %zu\n", num, size);
 
-        if (size >= 18446744073709551600UL) {
-          errno = 12;
-          return NULL;
-        }
-        size += 16;
+        size += 8;
 
 	static_opts_init(&sopts);
 	dynamic_opts_init(&dopts);
@@ -2444,11 +2424,10 @@ je_calloc(size_t num, size_t size) {
 
 	LOG("core.calloc.exit", "result: %p", ret);
         if (ret) {
-          uint64_t tok = trace_malloc(size-16);
-          uint64_t* meta = (uint64_t*)ret;
-          meta[1] = tok;
-          meta[0] = (uint64_t)ret;
-          return meta + 2;
+          uint64_t tok = trace_malloc(size-8);
+          size_t usize = je_sallocx(ret, 0);
+          uint64_t* meta = (uint64_t*)((char*)ret + usize);
+          meta[0] = tok;
         }
 
 	return ret;
@@ -2741,10 +2720,10 @@ je_free(void *ptr) {
 	LOG("core.free.entry", "ptr: %p", ptr);
 
         if (ptr) {
-          uint64_t* meta = ((uint64_t*)ptr) - 2;
-          uint64_t tok = meta[1];
+          size_t usize = je_sallocx(ptr, 0);
+          uint64_t* meta = (uint64_t*)((char*)ptr + usize);
+          uint64_t tok = meta[0];
           trace_free(tok);
-          ptr = (void*)meta[0];
         }
 
 	UTRACE(ptr, 0, 0);
@@ -2801,13 +2780,7 @@ je_memalign(size_t alignment, size_t size) {
 	LOG("core.memalign.entry", "alignment: %zu, size: %zu\n", alignment,
 	    size);
 
-        size_t offset = 16;
-        if (offset < alignment) offset = alignment;
-        if (size >= 18446744073709551600UL - offset) {
-          errno = 12;
-          return NULL;
-        }
-        size += offset;
+        size += 8;
 
 	static_opts_init(&sopts);
 	dynamic_opts_init(&dopts);
@@ -2833,11 +2806,10 @@ je_memalign(size_t alignment, size_t size) {
 
 	LOG("core.memalign.exit", "result: %p", ret);
         if (ret) {
-          uint64_t tok = trace_memalign(size-offset, alignment);
-          uint64_t* meta = (uint64_t*)(((char*)ret) + offset - 16);
-          meta[1] = tok;
-          meta[0] = (uint64_t)ret;
-          return (char*)ret + offset;
+          uint64_t tok = trace_memalign(size-8, alignment);
+          size_t usize = je_sallocx(ret, 0);
+          uint64_t* meta = (uint64_t*)((char*)ret + usize);
+          meta[0] = tok;
         }
 	return ret;
 }
@@ -2854,7 +2826,7 @@ je_valloc(size_t size) {
           errno = 12;
           return NULL;
         }
-        size += PAGE;
+        size += 8;
 
 	static_opts_t sopts;
 	dynamic_opts_t dopts;
@@ -2884,11 +2856,10 @@ je_valloc(size_t size) {
 
 	LOG("core.valloc.exit", "result: %p\n", ret);
         if (ret) {
-          uint64_t tok = trace_memalign(size-PAGE, PAGE);
-          uint64_t* meta = (uint64_t*)(((char*)ret) + PAGE - 16);
-          meta[1] = tok;
-          meta[0] = (uint64_t)ret;
-          return (char*)ret + PAGE;
+          uint64_t tok = trace_memalign(size-8, PAGE);
+          size_t usize = je_sallocx(ret, 0);
+          uint64_t* meta = (uint64_t*)((char*)ret + usize);
+          meta[0] = tok;
         }
 	return ret;
 }
@@ -2989,7 +2960,7 @@ JEMALLOC_SMALLOCX_CONCAT_HELPER2(je_smallocx_, JEMALLOC_VERSION_GID_IDENT)
           errno = 12;
           return NULL;
         }
-        size += 16;
+        size += 8;
 	LOG("core.smallocx.entry", "size: %zu, flags: %d", size, flags);
 
 	static_opts_init(&sopts);
@@ -3029,11 +3000,10 @@ JEMALLOC_SMALLOCX_CONCAT_HELPER2(je_smallocx_, JEMALLOC_VERSION_GID_IDENT)
 	assert(dopts.usize == je_nallocx(size, flags));
 	ret.size = dopts.usize;
         if (ret) {
-          uint64_t tok = trace_malloc(size-16);
-          uint64_t* meta = (uint64_t*)ret;
-          meta[1] = tok;
-          meta[0] = (uint64_t)ret;
-          return meta + 2;
+          uint64_t tok = trace_malloc(size-8);
+          size_t usize = je_sallocx(ret, 0);
+          uint64_t* meta = (uint64_t*)((char*)ret + usize);
+          meta[0] = tok;
         }
 
 	LOG("core.smallocx.exit", "result: %p, size: %zu", ret.ptr, ret.size);
@@ -3051,18 +3021,11 @@ je_mallocx(size_t size, int flags) {
 	static_opts_t sopts;
 	dynamic_opts_t dopts;
 
-        size_t offset = 16;
-        if ((flags & MALLOCX_LG_ALIGN_MASK) != 0) {
-          size_t alignment = MALLOCX_ALIGN_GET_SPECIFIED(flags);
-          if (alignment > offset) offset = alignment;
-        }
-
-
-        if (size >= 18446744073709551600UL - offset) {
+        if (size >= 18446744073709551600UL - 8) {
           errno = 12;
           return NULL;
         }
-        size += offset;
+        size += 8;
 	LOG("core.mallocx.entry", "size: %zu, flags: %d", size, flags);
 
 	static_opts_init(&sopts);
@@ -3106,11 +3069,10 @@ je_mallocx(size_t size, int flags) {
 
 	LOG("core.mallocx.exit", "result: %p", ret);
         if (ret) {
-          uint64_t tok = trace_memalign(size-offset, offset);
-          uint64_t* meta = (uint64_t*)(((char*)ret) + offset - 16);
-          meta[1] = tok;
-          meta[0] = (uint64_t)ret;
-          return (char*)ret + offset;
+          uint64_t tok = trace_malloc(size-8);
+          size_t usize = je_sallocx(ret, 0);
+          uint64_t* meta = (uint64_t*)((char*)ret + usize);
+          meta[0] = tok;
         }
 	return ret;
 }
@@ -3202,7 +3164,8 @@ je_rallocx(void *ptr, size_t size, int flags) {
         }
         void* ret = je_mallocx(size, flags);
         size_t amt = je_sallocx(ptr, flags);
-        if (amt > size) amt = size;
+        size_t newsize = je_sallocx(ret, flags);
+        if (amt > newsize) amt = newsize;
         memcpy(ret, ptr, amt);
         je_dallocx(ptr, flags);
         return ret;
@@ -3448,12 +3411,6 @@ je_sallocx(const void *ptr, int flags) {
 	size_t usize;
 	tsdn_t *tsdn;
 
-        size_t offset = 0;
-        if (ptr) {
-          uint64_t* meta = ((uint64_t*)ptr) - 2;
-          offset = (size_t)ptr - meta[0];
-          ptr = (void*)meta[0];
-        }
 	LOG("core.sallocx.entry", "ptr: %p, flags: %d", ptr, flags);
 
 	assert(malloc_initialized() || IS_INITIALIZER);
@@ -3472,7 +3429,7 @@ je_sallocx(const void *ptr, int flags) {
 	check_entry_exit_locking(tsdn);
 
 	LOG("core.sallocx.exit", "result: %zu", usize);
-	return usize - offset;
+	return usize - 8;
 }
 
 JEMALLOC_EXPORT void JEMALLOC_NOTHROW
@@ -3483,10 +3440,10 @@ je_dallocx(void *ptr, int flags) {
 	assert(malloc_initialized() || IS_INITIALIZER);
 
         if (ptr) {
-          uint64_t* meta = ((uint64_t*)ptr) - 2;
-          uint64_t tok = meta[1];
+          size_t usize = je_sallocx(ptr, 0);
+          uint64_t* meta = (uint64_t*)((char*)ptr + usize);
+          uint64_t tok = meta[0];
           trace_free(tok);
-          ptr = (void*)meta[0];
         }
 
 	tsd_t *tsd = tsd_fetch();
@@ -3555,6 +3512,9 @@ je_sdallocx(void *ptr, size_t size, int flags) {
 	assert(ptr != NULL);
 	assert(malloc_initialized() || IS_INITIALIZER);
 
+        // TODO
+        return je_dallocx(ptr, flags);
+
         size_t offset = 16;
         if ((flags & MALLOCX_LG_ALIGN_MASK) != 0) {
           size_t alignment = MALLOCX_ALIGN_GET_SPECIFIED(flags);
@@ -3620,13 +3580,7 @@ je_nallocx(size_t size, int flags) {
 	size_t usize;
 	tsdn_t *tsdn;
 
-        size_t offset = 16;
-        if ((flags & MALLOCX_LG_ALIGN_MASK) != 0) {
-          size_t alignment = MALLOCX_ALIGN_GET_SPECIFIED(flags);
-          if (alignment > offset) offset = alignment;
-        }
-	assert(size != 0);
-        size += offset;
+        size += 8;
 
 	if (unlikely(malloc_init())) {
 		LOG("core.nallocx.exit", "result: %zu", ZU(0));
@@ -3644,7 +3598,7 @@ je_nallocx(size_t size, int flags) {
 
 	check_entry_exit_locking(tsdn);
 	LOG("core.nallocx.exit", "result: %zu", usize);
-	return usize - offset;
+	return usize - 8;
 }
 
 JEMALLOC_EXPORT int JEMALLOC_NOTHROW
@@ -3729,10 +3683,6 @@ je_malloc_usable_size(JEMALLOC_USABLE_SIZE_CONST void *ptr) {
 	size_t ret;
 	tsdn_t *tsdn;
 
-        if (ptr) {
-          uint64_t* meta = ((uint64_t*)ptr) - 2;
-          ptr = (void*)meta[0];
-        }
 	LOG("core.malloc_usable_size.entry", "ptr: %p", ptr);
 
 	assert(malloc_initialized() || IS_INITIALIZER);
@@ -3865,7 +3815,7 @@ _malloc_prefork(void)
 void
 jemalloc_postfork_parent(void)
 #else
-ppJEMALLOC_EXPORT void
+JEMALLOC_EXPORT void
 _malloc_postfork(void)
 #endif
 {

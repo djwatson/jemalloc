@@ -115,6 +115,7 @@ TEST_BEGIN(test_zero) {
 		p = mallocx(start_size, MALLOCX_ZERO);
 		assert_ptr_not_null(p, "Unexpected mallocx() error");
 		psz = sallocx(p, 0);
+                fprintf(stderr, "li %li psz %li\n", start_size, psz);
 
 		assert_false(validate_fill(p, 0, 0, psz),
 		    "Expected zeroed memory");
