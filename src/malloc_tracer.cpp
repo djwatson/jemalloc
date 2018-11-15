@@ -341,7 +341,7 @@ void MallocTracer::RefreshBuffer() {
     SetBufPtr(buf_storage_);
     signal_saved_buf_ptr_ = buf_storage_;
   }
-  if (!no_more_writes && (total_size >= 1024*1024*1024)) {
+  if (!no_more_writes && (total_size >= 1024*1024*1024*10)) {
     finalize_tracing();
   }
 }
