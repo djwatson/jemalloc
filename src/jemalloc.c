@@ -25,7 +25,7 @@ void trace_postfork_parent();
 uint64_t trace_malloc(size_t size);
 uint64_t trace_free(size_t size);
 void trace_free_sized(uint64_t tok);
-void trace_realloc(uint64_t tok, size_t size);
+uint64_t trace_realloc(uint64_t tok, size_t size);
 uint64_t trace_memalign(size_t size, size_t align);
 /******************************************************************************/
 /* Data. */
@@ -2709,7 +2709,7 @@ je_realloc(void *ptr, size_t arg_size) {
 	LOG("core.realloc.exit", "result: %p", ret);
 
         if (ret) {
-          trace_realloc(tok, arg_size-8);
+          tok = trace_realloc(tok, arg_size-8);
           size_t usize = je_sallocx(ret, 0);
           uint64_t* meta = (uint64_t*)((char*)ret + usize);
           meta[0] = tok;

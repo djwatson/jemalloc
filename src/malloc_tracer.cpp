@@ -145,8 +145,8 @@ extern "C" {
   void trace_free_sized(uint64_t tok) {
     MallocTracer::GetInstance()->TraceFreeSized(tok);
   }
-  void trace_realloc(uint64_t tok, size_t size) {
-    MallocTracer::GetInstance()->TraceRealloc(tok, size);
+  uint64_t trace_realloc(uint64_t tok, size_t size) {
+    return MallocTracer::GetInstance()->TraceRealloc(tok, size);
   }
   uint64_t trace_memalign(size_t size, size_t align) {
     return MallocTracer::GetInstance()->TraceMemalign(size, align);
