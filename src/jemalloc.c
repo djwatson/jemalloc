@@ -2401,8 +2401,6 @@ je_calloc(size_t num, size_t size) {
 
 	LOG("core.calloc.entry", "num: %zu, size: %zu\n", num, size);
 
-        size += 8;
-
 	static_opts_init(&sopts);
 	dynamic_opts_init(&dopts);
 
@@ -2412,8 +2410,9 @@ je_calloc(size_t num, size_t size) {
 	sopts.oom_string = "<jemalloc>: Error in calloc(): out of memory\n";
 
 	dopts.result = &ret;
-	dopts.num_items = num;
-	dopts.item_size = size;
+	dopts.num_items = 1;
+        size_t tot_size = (num * size) + 8;
+	dopts.item_size = tot_size;
 	dopts.zero = true;
 
 	imalloc(&sopts, &dopts);
@@ -2424,7 +2423,7 @@ je_calloc(size_t num, size_t size) {
 
 	LOG("core.calloc.exit", "result: %p", ret);
         if (ret) {
-          uint64_t tok = trace_malloc(size-8);
+          uint64_t tok = trace_malloc(tot_size-8);
           size_t usize = je_sallocx(ret, 0);
           uint64_t* meta = (uint64_t*)((char*)ret + usize);
           meta[0] = tok;
@@ -2586,26 +2585,16 @@ je_realloc(void *ptr, size_t arg_size) {
 	tsdn_t *tsdn JEMALLOC_CC_SILENCE_INIT(NULL);
 	size_t usize JEMALLOC_CC_SILENCE_INIT(0);
 	size_t old_usize = 0;
+        arg_size += 8;
 	size_t size = arg_size;
+        uint64_t tok = 0;
 
-        if (arg_size >= SIZE_T_MAX >> 2) {
-          errno = 12;
-          return NULL;
+        if (ptr) {
+          size_t usize = je_sallocx(ptr, 0);
+          uint64_t* meta = (uint64_t*)((char*)ptr + usize);
+          tok = meta[0];
+          //trace_free(tok);
         }
-	LOG("core.realloc.entry", "ptr: %p, size: %zu\n", ptr, size);
-        if (arg_size == 0) {
-          je_free(ptr);
-          return NULL;
-        }
-        if (!ptr) {
-          return je_malloc(arg_size);
-        }
-        void* res = je_malloc(arg_size);
-        size_t amt = je_sallocx(ptr, 0);
-        if (amt > arg_size) amt = arg_size;
-        memcpy(res, ptr, amt);
-        je_free(ptr);
-        return res;
 
 	if (unlikely(size == 0)) {
 		if (ptr != NULL) {
@@ -2688,6 +2677,13 @@ je_realloc(void *ptr, size_t arg_size) {
 			    (uintptr_t)ret, args);
 		}
 
+
+                if (ret) {
+                  uint64_t tok = trace_malloc(size-8);
+                  size_t usize = je_sallocx(ret, 0);
+                  uint64_t* meta = (uint64_t*)((char*)ret + usize);
+                  meta[0] = tok;
+                }
 		return ret;
 	}
 
@@ -2712,6 +2708,12 @@ je_realloc(void *ptr, size_t arg_size) {
 
 	LOG("core.realloc.exit", "result: %p", ret);
 
+        if (ret) {
+          trace_realloc(tok, arg_size-8);
+          size_t usize = je_sallocx(ret, 0);
+          uint64_t* meta = (uint64_t*)((char*)ret + usize);
+          meta[0] = tok;
+        }
 	return ret;
 }
 
@@ -3512,22 +3514,7 @@ je_sdallocx(void *ptr, size_t size, int flags) {
 	assert(ptr != NULL);
 	assert(malloc_initialized() || IS_INITIALIZER);
 
-        // TODO
-        return je_dallocx(ptr, flags);
-
-        size_t offset = 16;
-        if ((flags & MALLOCX_LG_ALIGN_MASK) != 0) {
-          size_t alignment = MALLOCX_ALIGN_GET_SPECIFIED(flags);
-          if (alignment > offset) offset = alignment;
-        }
-        size += offset;
-        
-        if (ptr) {
-          uint64_t* meta = ((uint64_t*)ptr) - 2;
-          uint64_t tok = meta[1];
-          trace_free_sized(tok);
-          ptr = (void*)meta[0];
-        }
+        size += 8;
 
 	LOG("core.sdallocx.entry", "ptr: %p, size: %zu, flags: %d", ptr,
 	    size, flags);
@@ -3535,6 +3522,9 @@ je_sdallocx(void *ptr, size_t size, int flags) {
 	tsd_t *tsd = tsd_fetch();
 	bool fast = tsd_fast(tsd);
 	size_t usize = inallocx(tsd_tsdn(tsd), size, flags);
+        uint64_t* meta = (uint64_t*)((char*)ptr + usize - 8);
+        uint64_t tok = meta[0];
+        trace_free_sized(tok);
 	assert(usize == isalloc(tsd_tsdn(tsd), ptr));
 	check_entry_exit_locking(tsd_tsdn(tsd));
 

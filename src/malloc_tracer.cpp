@@ -149,7 +149,7 @@ extern "C" {
     MallocTracer::GetInstance()->TraceRealloc(tok, size);
   }
   uint64_t trace_memalign(size_t size, size_t align) {
-    MallocTracer::GetInstance()->TraceMemalign(size, align);
+    return MallocTracer::GetInstance()->TraceMemalign(size, align);
   }
 }
 void MallocTracer::MallocTracerDestructor(void *arg) {
